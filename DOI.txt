@@ -1,0 +1,27 @@
+Function Module - ZSCM_GET_VEHDATA
+
+Requirement - To improve the performance of select query of table YTTSTX0001 by adding AREA = im_data-area AND function = LT_CONFIG_T-EWM_UOM_D in the WHERE query
+       SELECT area
+               report_no
+               truck_no
+               transptrcd
+               transplpt
+               shnumber
+               status
+               reject_res
+               truck_type
+               trk_purpos
+               vtweg
+               spart
+               matgr
+               totalqty
+               function
+               vstel
+               pp_entr_dt
+               pp_entr_tm
+          FROM yttstx0001
+          INTO TABLE lt_vehicle_data
+          FOR ALL ENTRIES IN lt_config_t
+          WHERE transplpt = lt_config_t-transplpt AND" lw_config-transplpt"
+                vstel     = lt_config_t-vstel AND" lw_config-vstel"            "Index YTTSTX0001~ROU
+                trk_purpos = lt_config_t-trk_purpos
