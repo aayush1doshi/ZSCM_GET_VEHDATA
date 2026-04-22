@@ -1,0 +1,304 @@
+FUNCTION zscm_get_vehdata .
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(IM_DATA) TYPE  ZGET_VEHDATA OPTIONAL
+*"  EXPORTING
+*"     VALUE(ET_VEHICLE_DATA) TYPE  ZSCM_TT_VEHICLE_OUTPUT
+*"     VALUE(LW_MSG) TYPE  ZBAPIRET2
+*"  EXCEPTIONS
+*"      INVALID_INPUT
+*"      NO_CONFIGURATION_FOUND
+*"      DATABASE_ERROR
+*"      NO_VEHICLE
+*"----------------------------------------------------------------------
+  "----------------------------------------------------------------------
+  "*"Local Interface:
+  "  IMPORTING
+  "     VALUE(IM_DATA) TYPE  ZGET_VEHDATA OPTIONAL
+  "  EXPORTING
+  "     VALUE(ET_VEHICLE_DATA) TYPE  ZSCM_TT_VEHICLE_OUTPUT
+  "  EXCEPTIONS
+  "      INVALID_INPUT
+  "      NO_CONFIGURATION_FOUND
+  "      DATABASE_ERROR
+  "----------------------------------------------------------------------
+
+*----------------------------------------------------------------------*
+* Data Declarations
+*----------------------------------------------------------------------*
+  " Configuration data
+  DATA: lt_config         TYPE ty_config_table,
+        lw_config         TYPE ty_config_param, "" BEGIN: Cursor Generated Code author : Sailasuta D 01.03.2026 CD:8085172 TR:RD2K9A5I5W
+        lt_config_t       TYPE TABLE OF ty_config_param. "" BEGIN: Cursor Generated Code author : Sailasuta D 01.03.2026 CD:8085172 TR:RD2K9A5I5W
+
+  " Vehicle data
+  DATA: lt_vehicle_data   TYPE ty_yttstx0001_table,
+        lt_vehicle_filter TYPE ty_yttstx0001_table,
+        lw_vehicle_data   TYPE ty_yttstx0001_select.
+
+  " Output data
+  DATA: lw_output         TYPE zscm_s_vehicle_output.
+
+  " Counters and messages
+  DATA: lv_count(5)       TYPE c,
+        lv_line           TYPE i,
+        lv_count_filtered TYPE i,
+        lv_msg_text       TYPE string,"" BEGIN: Cursor Generated Code author : Sailasuta D 01.03.2026 CD:8085172 TR:RD2K9A5I5W
+        ltr_lifnr         TYPE RANGE OF lifnr,
+        lwr_lifnr         LIKE LINE OF  ltr_lifnr.
+
+  " Exception handling
+  DATA: lo_exception      TYPE REF TO cx_root.
+
+  TYPES: BEGIN OF lty_lfa1, "" BEGIN: Cursor Generated Code author : Sailasuta D 01.03.2026 CD:8085172 TR:RD2K9A5I5W
+          lifnr	 TYPE  lifnr,
+          name1	 TYPE  name1_gp,
+         END OF lty_lfa1.
+  " LFA1 vendor data
+  DATA: lt_lfa1           TYPE TABLE OF lty_lfa1, "" BEGIN: Cursor Generated Code author : Sailasuta D 01.03.2026 CD:8085172 TR:RD2K9A5I5W
+        lw_lfa1           TYPE lty_lfa1,
+        lv_func TYPE ystats.
+  RANGES:lr_func FOR lv_func.
+
+*----------------------------------------------------------------------*
+* Constants
+*----------------------------------------------------------------------*
+  CONSTANTS: lc_fm_name    TYPE rvari_vnam VALUE 'ZSCM_GET_VEHDATA',
+             lc_active     TYPE zactive_flag VALUE 'X',
+             lc_space      TYPE char1 VALUE ' ',
+             lc_msg_s      TYPE char1 VALUE 'S',
+             lc_msg_e      TYPE char1 VALUE 'E',
+             lc_msg_w      TYPE char1 VALUE 'W'.
+
+  FIELD-SYMBOLS:<lfs_config> TYPE ty_config_param.
+*----------------------------------------------------------------------*
+* Main Processing
+*----------------------------------------------------------------------*
+
+  " Initialize export parameters
+  CLEAR: et_vehicle_data.
+*----------------------------------------------------------------------*
+* Step 1: Input Validation
+*----------------------------------------------------------------------*
+  IF im_data-area IS INITIAL.
+    lw_msg-type = 'E'.
+    lw_msg-id = 'ZLOG'.
+    lw_msg-message = 'Input parameter IV_AREA is mandatory'(001).
+    RAISE invalid_input.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+* Step 2: Fetch Configuration Parameters
+*----------------------------------------------------------------------*
+  TRY.
+      " Fetch active configuration from ZLOG_EXEC_VAR
+      SELECT name
+             active
+             remarks
+             trk_purpos
+             ewb_uom_d
+             vstel
+             transplpt
+        FROM zlog_exec_var
+        INTO TABLE lt_config
+        WHERE name = lc_fm_name
+          AND active = lc_active.
+
+      IF sy-subrc <> 0.
+        lw_msg-type = 'E'.
+        lw_msg-id = 'ZLOG'.
+        lw_msg-message = 'No active configuration found for function module'(002).
+        RAISE no_configuration_found.
+      ENDIF.
+
+    CATCH cx_root INTO lo_exception.
+      lv_msg_text = lo_exception->get_text( ).
+      CONCATENATE 'Database error while fetching configuration:'(003)
+            lv_msg_text
+       INTO lw_msg-message SEPARATED BY space.
+      lw_msg-type = 'E'.
+      lw_msg-id = 'ZLOG'.
+      RAISE database_error.
+  ENDTRY.
+
+  " Read first configuration entry (if multiple exist)
+  READ TABLE lt_config INTO lw_config INDEX 1.
+  IF sy-subrc <> 0.
+    lw_msg-type = 'E'.
+    lw_msg-id = 'ZLOG'.
+    lw_msg-message =  'Error reading configuration data'(004).
+    RAISE no_configuration_found.
+  ENDIF.
+
+  " Validate configuration data completeness
+  IF lw_config-ewm_uom_d IS INITIAL OR
+     lw_config-trk_purpos IS INITIAL OR
+     lw_config-remarks IS INITIAL OR
+     lw_config-vstel IS INITIAL OR
+     lw_config-transplpt IS INITIAL.
+    lw_msg-type = 'E'.
+    lw_msg-id = 'ZLOG'.
+    lw_msg-message = 'Configuration data is incomplete. Check ZLOG_EXEC_VAR'(005).
+    RAISE no_configuration_found.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+* Step 3: Query Vehicle Data from YTTSTX0001
+*----------------------------------------------------------------------*
+  TRY.
+      "" BEGIN: Cursor Generated Code author : Sailasuta D 01.03.2026 CD:8085172 TR:RD2K9A5I5W
+      CLEAR:lr_func,lr_func[].
+      LOOP AT lt_config ASSIGNING <lfs_config>.
+        lw_config = <lfs_config>.<lfs_config>-area = im_data-area.
+        lr_func-sign = 'I'.lr_func-option = 'EQ'.
+        lr_func-low = lw_config-ewm_uom_d.lr_func-high = ''.
+        APPEND lr_func TO lr_func.
+        CLEAR:lr_func.
+      ENDLOOP.
+
+      lt_config_t[] = lt_config[].
+      SORT lt_config_t BY transplpt vstel area transplpt vstel ewm_uom_d trk_purpos.
+      DELETE ADJACENT DUPLICATES FROM lt_config_t COMPARING area transplpt vstel ewm_uom_d trk_purpos.
+********************************
+      " Structure ty_yttstx0001_select matches SELECT field order exactly
+      " Database filtering with 5 WHERE conditions
+      IF NOT lt_config_t[] IS INITIAL.
+        SELECT area
+               report_no
+               truck_no
+               transptrcd
+               transplpt
+               shnumber
+               status
+               reject_res
+               truck_type
+               trk_purpos
+               vtweg
+               spart
+               matgr
+               totalqty
+               function
+               vstel
+               pp_entr_dt
+               pp_entr_tm
+          FROM yttstx0001
+          INTO TABLE lt_vehicle_data
+          FOR ALL ENTRIES IN lt_config_t
+          WHERE area = lt_config_t-area AND
+                transplpt = lt_config_t-transplpt AND" lw_config-transplpt"
+                vstel     = lt_config_t-vstel AND" lw_config-vstel"            "Index YTTSTX0001~ROU
+                function  = lt_config_t-ewm_uom_d+0(4) AND
+                trk_purpos = lt_config_t-trk_purpos." lw_config-trk_purpos."
+        " END: Cursor Generated Code author : Sailasuta D 01.03.2026 CD:8085172 TR:RD2K9A5I5W
+        IF sy-subrc <> 0.
+          " No records found in database - Warning
+          CONCATENATE 'No vehicle data found for area'(006)
+              im_data-area
+         INTO lw_msg-message SEPARATED BY space.
+
+          lw_msg-type = 'E'.
+          lw_msg-id = 'ZLOG'.
+          RAISE no_vehicle.
+          "" BEGIN: Cursor Generated Code author : Sailasuta D 01.03.2026 CD:8085172 TR:RD2K9A5I5W
+        ELSE.
+          SORT lt_vehicle_data BY area.
+*          DELETE lt_vehicle_data WHERE area NE im_data-area."area      = im_data-area
+*          DELETE lt_vehicle_data WHERE function NOT IN lr_func[]."function  = lw_config-ewm_uom_d
+        ENDIF.
+      ENDIF.
+      "" END: Cursor Generated Code author : Sailasuta D 01.03.2026 CD:8085172 TR:RD2K9A5I5W
+    CATCH cx_root INTO lo_exception.
+      lv_msg_text = lo_exception->get_text( ).
+      CONCATENATE 'Database error while fetching vehicle data:'(007)
+            lv_msg_text
+       INTO lw_msg-message SEPARATED BY space.
+      lw_msg-type = 'E'.
+      lw_msg-id = 'ZLOG'.
+
+      RAISE database_error.
+  ENDTRY.
+
+*----------------------------------------------------------------------*
+* Step 4: Filter Vehicle Data in Memory
+*----------------------------------------------------------------------*
+  " Apply business rules: TRUCK_TYPE, SHNUMBER (blank), REJECT_RES (blank)
+  LOOP AT lt_vehicle_data INTO lw_vehicle_data.
+    " Check all three filter conditions
+    IF lw_vehicle_data-truck_type = lw_config-remarks AND
+       lw_vehicle_data-shnumber   = lc_space AND
+       lw_vehicle_data-reject_res = lc_space.
+      " BEGIN: Cursor Generated Code author : omkar more on 12.03.2026 CD:8085172 TR:RD2K9A5I5W
+      lwr_lifnr-sign   = 'I'.
+      lwr_lifnr-option = 'EQ'.
+      lwr_lifnr-low    = lw_vehicle_data-transptrcd.
+      APPEND lwr_lifnr TO ltr_lifnr.
+      CLEAR  lwr_lifnr.
+      " END: Cursor Generated Code author : omkar more on 12.03.2026 CD:8085172 TR:RD2K9A5I5W
+      " Record meets all filter criteria
+      APPEND lw_vehicle_data TO lt_vehicle_filter.
+    ENDIF.
+    CLEAR lw_vehicle_data.
+  ENDLOOP.
+  " BEGIN: Cursor Generated Code author : omkar more on 12.03.2026 CD:8085172 TR:RD2K9A5I5W
+  " Fetch Name1 for Vendor
+  SORT ltr_lifnr BY low.
+  DELETE ADJACENT DUPLICATES FROM ltr_lifnr COMPARING low.
+  IF ltr_lifnr[] IS NOT INITIAL.
+    SELECT lifnr
+           name1
+    FROM lfa1 CLIENT SPECIFIED
+    INTO TABLE lt_lfa1
+    WHERE mandt = sy-mandt
+    AND   lifnr IN ltr_lifnr[].
+    IF sy-subrc = 0.
+      SORT lt_lfa1 BY lifnr.
+    ENDIF.
+  ENDIF.
+  " END: Cursor Generated Code author : omkar more on 12.03.2026 CD:8085172 TR:RD2K9A5I5W
+  " Check if any records passed the filter
+  DESCRIBE TABLE lt_vehicle_filter LINES lv_count_filtered.
+  IF lv_count_filtered = 0.
+    " Records found in DB but filtered out - Warning
+    CONCATENATE 'No vehicle data found matching all filter criteria for area'(010)
+            im_data-area
+       INTO lw_msg-message SEPARATED BY space.
+    lw_msg-type = lc_msg_w.
+    lw_msg-id = 'ZLOG'.
+    RETURN.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+* Step 5: Populate Output Table from Filtered Data
+*----------------------------------------------------------------------*
+  " Move filtered data to output table (14 fields)
+  LOOP AT lt_vehicle_filter INTO lw_vehicle_data.
+    MOVE-CORRESPONDING lw_vehicle_data TO lw_output.
+    " BEGIN: Cursor Generated Code author : omkar more on 12.03.2026 CD:8085172 TR:RD2K9A5I5W
+    " Assign PP_ENTR_DT and PP_ENTR_TM (if not already moved by MOVE-CORRESPONDING)
+    lw_output-pp_entr_dt = lw_vehicle_data-pp_entr_dt.
+    lw_output-pp_entr_tm = lw_vehicle_data-pp_entr_tm.
+
+    " Lookup Name1 from LFA1 using TRANSPTRCD (LIFNR)
+    IF lw_vehicle_data-transptrcd IS NOT INITIAL.
+      READ TABLE lt_lfa1 INTO lw_lfa1
+        WITH KEY lifnr = lw_vehicle_data-transptrcd BINARY SEARCH.
+      IF sy-subrc = 0.
+        lw_output-name1 = lw_lfa1-name1.
+      ENDIF.
+      CLEAR lw_lfa1.
+    ENDIF.
+    " END: Cursor Generated Code author : omkar more on 12.03.2026 CD:8085172 TR:RD2K9A5I5W
+
+    APPEND lw_output TO et_vehicle_data.
+    CLEAR lw_output.
+  ENDLOOP.
+
+*----------------------------------------------------------------------*
+* Step 6: Set Success Message
+*----------------------------------------------------------------------*
+  DESCRIBE TABLE et_vehicle_data LINES lv_line.
+  lv_count = lv_line.
+  " END: Cursor Generated Code
+
+ENDFUNCTION.
